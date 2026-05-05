@@ -1,0 +1,6 @@
+{
+  "name": "HealthNexus Premium Hospital Management",
+  "description": "A production-grade 3-tier hospital management system featuring appointment booking, medicine pharmacy, and real-time doctor dashboards, inspired by Apollo Hospitals.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": []
+}

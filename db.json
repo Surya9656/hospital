@@ -1,0 +1,199 @@
+{
+  "users": [
+    {
+      "id": "1777535474982",
+      "name": "k.surya",
+      "email": "suryakandipalli50@gmail.com",
+      "password": "$2b$10$u5j9Blzg9kE61tEXM8bPIu0xPXR/495.ZCYnTP/qGMBN7hzRRNqfG",
+      "role": "patient"
+    },
+    {
+      "id": "1777535723855",
+      "name": "kalyan",
+      "email": "kalyan@gmail.com",
+      "password": "$2b$10$TvFYhsKSeP.sfIM3dpHf6OoFdm7HH9JYYvgeeRIjxluWsMrAWiqS6",
+      "role": "patient"
+    }
+  ],
+  "doctors": [
+    {
+      "id": "1",
+      "name": "Dr. Sarah Wilson",
+      "specialty": "Cardiologist",
+      "rating": 4.9,
+      "image": "https://images.unsplash.com/photo-1559839734-2b71f153678e?auto=format&fit=crop&q=80&w=200",
+      "experience": "12 years",
+      "fee": 1000
+    },
+    {
+      "id": "2",
+      "name": "Dr. James Miller",
+      "specialty": "Neurologist",
+      "rating": 4.8,
+      "image": "https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?auto=format&fit=crop&q=80&w=200",
+      "experience": "15 years",
+      "fee": 1200
+    },
+    {
+      "id": "3",
+      "name": "Dr. Emily Chen",
+      "specialty": "Pediatrician",
+      "rating": 4.9,
+      "image": "https://images.unsplash.com/photo-1594824476967-48c8b964273f?auto=format&fit=crop&q=80&w=200",
+      "experience": "8 years",
+      "fee": 800
+    },
+    {
+      "id": "4",
+      "name": "Dr. Michael Brown",
+      "specialty": "Orthopedic",
+      "rating": 4.7,
+      "image": "https://images.unsplash.com/photo-1622253692010-333f2da6031d?auto=format&fit=crop&q=80&w=200",
+      "experience": "10 years",
+      "fee": 1100
+    },
+    {
+      "id": "5",
+      "name": "Dr. Anita Desai",
+      "specialty": "Dermatologist",
+      "rating": 4.8,
+      "image": "https://images.unsplash.com/photo-1527613426441-4da17471b66d?auto=format&fit=crop&q=80&w=200",
+      "experience": "7 years",
+      "fee": 900
+    },
+    {
+      "id": "6",
+      "name": "Dr. Robert Fox",
+      "specialty": "General Physician",
+      "rating": 4.6,
+      "image": "https://images.unsplash.com/photo-1537368910025-700350fe46c7?auto=format&fit=crop&q=80&w=200",
+      "experience": "20 years",
+      "fee": 600
+    }
+  ],
+  "medicines": [
+    {
+      "id": "1",
+      "name": "Paracetamol 500mg",
+      "price": 45,
+      "category": "Pain Relief",
+      "stock": 100,
+      "image": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&q=80&w=200"
+    },
+    {
+      "id": "2",
+      "name": "Amoxicillin 250mg",
+      "price": 120,
+      "category": "Antibiotics",
+      "stock": 50,
+      "image": "https://images.unsplash.com/photo-1587854692152-cbe660dbbb88?auto=format&fit=crop&q=80&w=200"
+    },
+    {
+      "id": "3",
+      "name": "Vitamin C 1000mg",
+      "price": 299,
+      "category": "Supplements",
+      "stock": 200,
+      "image": "https://images.unsplash.com/photo-1616671285410-096739bc4672?auto=format&fit=crop&q=80&w=200"
+    },
+    {
+      "id": "4",
+      "name": "Ibuprofen 400mg",
+      "price": 65,
+      "category": "Pain Relief",
+      "stock": 80,
+      "image": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&q=80&w=200"
+    },
+    {
+      "id": "5",
+      "name": "Insulin Glargine",
+      "price": 1500,
+      "category": "Diabetes",
+      "stock": 30,
+      "image": "https://images.unsplash.com/photo-1587854692152-cbe660dbbb88?auto=format&fit=crop&q=80&w=200"
+    }
+  ],
+  "appointments": [
+    {
+      "id": "1777619334478",
+      "userId": "1777535723855",
+      "doctorId": "3",
+      "date": "2026-05-02",
+      "time": "09:00 AM",
+      "status": "scheduled"
+    },
+    {
+      "id": "1777619394632",
+      "userId": "1777535723855",
+      "doctorId": "1",
+      "date": "2026-05-01",
+      "time": "10:00 AM",
+      "status": "scheduled"
+    }
+  ],
+  "orders": [
+    {
+      "id": "1777619260987",
+      "userId": "1777535723855",
+      "items": [
+        {
+          "id": "1",
+          "name": "Paracetamol 500mg",
+          "price": 45,
+          "category": "Pain Relief",
+          "stock": 100,
+          "image": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&q=80&w=200",
+          "quantity": 1
+        },
+        {
+          "id": "2",
+          "name": "Amoxicillin 250mg",
+          "price": 120,
+          "category": "Antibiotics",
+          "stock": 50,
+          "image": "https://images.unsplash.com/photo-1587854692152-cbe660dbbb88?auto=format&fit=crop&q=80&w=200",
+          "quantity": 1
+        }
+      ],
+      "total": 165,
+      "date": "2026-05-01T07:07:40.987Z",
+      "status": "processing"
+    },
+    {
+      "id": "1777619706705",
+      "userId": "1777535723855",
+      "items": [
+        {
+          "id": "2",
+          "name": "Amoxicillin 250mg",
+          "price": 120,
+          "category": "Antibiotics",
+          "stock": 50,
+          "image": "https://images.unsplash.com/photo-1587854692152-cbe660dbbb88?auto=format&fit=crop&q=80&w=200",
+          "quantity": 1
+        }
+      ],
+      "total": 120,
+      "date": "2026-05-01T07:15:06.705Z",
+      "status": "processing"
+    },
+    {
+      "id": "1777619823909",
+      "userId": "1777535723855",
+      "items": [
+        {
+          "id": "5",
+          "name": "Insulin Glargine",
+          "price": 1500,
+          "category": "Diabetes",
+          "stock": 30,
+          "image": "https://images.unsplash.com/photo-1587854692152-cbe660dbbb88?auto=format&fit=crop&q=80&w=200",
+          "quantity": 1
+        }
+      ],
+      "total": 1500,
+      "date": "2026-05-01T07:17:03.909Z",
+      "status": "processing"
+    }
+  ]
+}
