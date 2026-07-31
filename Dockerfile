@@ -1,6 +1,5 @@
-
-# Build stage
-FROM node:24-alpine AS builder
+# Stage 1: Build
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -13,19 +12,21 @@ COPY . .
 RUN npm run build
 
 
-# Production stage
-FROM node:24-alpine
+# Stage 2: Production
+FROM node:20-alpine
 
 WORKDIR /app
+
+ENV NODE_ENV=production
 
 COPY package*.json ./
 
 RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
-
-COPY server.ts ./
+COPY --from=builder /app/server.ts ./server.ts
+COPY --from=builder /app/database ./database
 
 EXPOSE 3000
 
-CMD ["npm", "start"]
+CMD ["npx", "tsx", "server.ts"]
