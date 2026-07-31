@@ -1,0 +1,41 @@
+services:
+
+  postgres:
+    image: postgres:18
+    container_name: hospital-postgres
+    environment:
+      POSTGRES_DB: hospital_db
+      POSTGRES_USER: hospital_admin
+      POSTGRES_PASSWORD: hospital_local_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./database/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hospital_admin -d hospital_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  hospital-app:
+    image: hospital-app:latest
+    container_name: hospital-app
+    ports:
+      - "3000:3000"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: hospital_db
+      DB_USER: hospital_admin
+      DB_PASSWORD: hospital_local_password
+      PORT: 3000
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
