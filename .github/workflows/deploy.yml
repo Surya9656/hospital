@@ -16,7 +16,7 @@ env:
   AWS_REGION: ap-south-1
   ECR_REPOSITORY: hospital-app
   S3_BUCKET: hospital-app-artifacts-028282962975
-  EC2_INSTANCE_ID: i-xxxxxxxxxxxxxxxxx
+  EC2_INSTANCE_ID: i-0fb5f0c5bd05bcdc9
   CONTAINER_NAME: hospital-app
   APP_PORT: 3000
 
