@@ -23,7 +23,7 @@ env:
 jobs:
 
   # ==========================================================
-  # JOB 1 - CI
+  # JOB 1 - CI: BUILD APPLICATION
   # ==========================================================
 
   ci:
@@ -55,7 +55,7 @@ jobs:
 
 
   # ==========================================================
-  # JOB 2 - BUILD DOCKER + ECR + S3
+  # JOB 2 - DOCKER BUILD + ECR PUSH + S3 UPLOAD
   # ==========================================================
 
   build-and-push:
@@ -64,6 +64,8 @@ jobs:
 
     needs: ci
 
+    # Only deploy after push to main.
+    # Pull requests only run CI.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     permissions:
@@ -71,10 +73,13 @@ jobs:
       id-token: write
 
     outputs:
-      image:
-        value: ${{ steps.build-image.outputs.image }}
+      image: ${{ steps.build-image.outputs.image }}
 
     steps:
+
+      # --------------------------------------------------------
+      # Checkout
+      # --------------------------------------------------------
 
       - name: Checkout Code
         uses: actions/checkout@v5
@@ -92,7 +97,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # AWS OIDC
+      # AWS OIDC Authentication
       # --------------------------------------------------------
 
       - name: Configure AWS Credentials
@@ -103,7 +108,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Login ECR
+      # Login to Amazon ECR
       # --------------------------------------------------------
 
       - name: Login to Amazon ECR
@@ -123,9 +128,11 @@ jobs:
 
         run: |
 
-          IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-          echo "Building image:"
+          echo "=========================================="
+          echo "Building Docker Image"
+          echo "=========================================="
           echo "$IMAGE_URI"
 
           docker build \
@@ -137,15 +144,19 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Push Docker Image
+      # Push Docker Image to ECR
       # --------------------------------------------------------
 
-      - name: Push Docker Image
+      - name: Push Docker Image to ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
 
         run: |
+
+          echo "=========================================="
+          echo "Pushing Docker Image to ECR"
+          echo "=========================================="
 
           docker push \
             "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
@@ -155,11 +166,15 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Upload Build to S3
+      # Upload Versioned Build to S3
       # --------------------------------------------------------
 
       - name: Upload Versioned Build to S3
         run: |
+
+          echo "=========================================="
+          echo "Uploading Versioned Build to S3"
+          echo "=========================================="
 
           aws s3 sync dist/ \
             "s3://${S3_BUCKET}/builds/${GITHUB_SHA}/" \
@@ -167,19 +182,49 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Update Latest Build
+      # Update Latest Build in S3
       # --------------------------------------------------------
 
       - name: Update Latest Build in S3
         run: |
+
+          echo "=========================================="
+          echo "Updating Latest Build in S3"
+          echo "=========================================="
 
           aws s3 sync dist/ \
             "s3://${S3_BUCKET}/latest/" \
             --delete
 
 
+      # --------------------------------------------------------
+      # Build and Push Summary
+      # --------------------------------------------------------
+
+      - name: Build and Push Summary
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+
+        run: |
+
+          echo "=========================================="
+          echo "Build and Push Completed"
+          echo "=========================================="
+
+          echo "Docker Image:"
+          echo "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+          echo ""
+          echo "S3 Bucket:"
+          echo "$S3_BUCKET"
+
+          echo ""
+          echo "Build completed successfully."
+
+
   # ==========================================================
-  # JOB 3 - DEPLOY TO EC2 USING SSM
+  # JOB 3 - DEPLOY DOCKER CONTAINER TO EC2 USING SSM
   # ==========================================================
 
   deploy:
@@ -197,7 +242,7 @@ jobs:
     steps:
 
       # --------------------------------------------------------
-      # AWS OIDC
+      # AWS OIDC Authentication
       # --------------------------------------------------------
 
       - name: Configure AWS Credentials
@@ -208,18 +253,21 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Verify EC2 is SSM Managed
+      # Verify EC2 SSM Status
       # --------------------------------------------------------
 
       - name: Verify EC2 SSM Status
         run: |
 
-          echo "Checking EC2 instance..."
+          echo "=========================================="
+          echo "Checking EC2 SSM Status"
+          echo "=========================================="
 
           aws ssm describe-instance-information \
             --region "$AWS_REGION"
 
-          echo "Checking target instance..."
+          echo ""
+          echo "Checking target EC2 instance..."
 
           aws ssm describe-instance-information \
             --filters "Key=InstanceIds,Values=${EC2_INSTANCE_ID}" \
@@ -227,7 +275,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Deploy Docker Container
+      # Send Deployment Command to EC2
       # --------------------------------------------------------
 
       - name: Deploy Docker Container to EC2
@@ -244,6 +292,7 @@ jobs:
           echo "EC2 Instance:"
           echo "$EC2_INSTANCE_ID"
 
+          echo ""
           echo "Docker Image:"
           echo "$IMAGE_URI"
 
@@ -256,22 +305,28 @@ jobs:
             --parameters "commands=[
               \"set -e\",
               \"echo Starting deployment\",
-              \"aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin 028282962975.dkr.ecr.$AWS_REGION.amazonaws.com\",
+              \"echo Logging into Amazon ECR\",
+              \"aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin 028282962975.dkr.ecr.$AWS_REGION.amazonaws.com\",
+              \"echo ECR login successful\",
               \"echo Pulling Docker image\",
-              \"docker pull $IMAGE_URI\",
+              \"sudo docker pull $IMAGE_URI\",
+              \"echo Docker image pulled successfully\",
               \"echo Stopping old container\",
-              \"docker stop $CONTAINER_NAME || true\",
+              \"sudo docker stop $CONTAINER_NAME || true\",
               \"echo Removing old container\",
-              \"docker rm $CONTAINER_NAME || true\",
+              \"sudo docker rm $CONTAINER_NAME || true\",
               \"echo Starting new container\",
-              \"docker run -d --name $CONTAINER_NAME --restart unless-stopped -p $APP_PORT:$APP_PORT $IMAGE_URI\",
-              \"echo Checking container\",
-              \"docker ps --filter name=$CONTAINER_NAME\",
+              \"sudo docker run -d --name $CONTAINER_NAME --restart unless-stopped -p $APP_PORT:$APP_PORT $IMAGE_URI\",
+              \"echo Checking running containers\",
+              \"sudo docker ps --filter name=$CONTAINER_NAME\",
+              \"echo Checking container logs\",
+              \"sudo docker logs --tail 50 $CONTAINER_NAME\",
               \"echo Deployment completed successfully\"
             ]" \
             --query "Command.CommandId" \
             --output text)
 
+          echo ""
           echo "SSM Command ID:"
           echo "$COMMAND_ID"
 
@@ -279,24 +334,27 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Wait for SSM Command
+      # Wait for Deployment
       # --------------------------------------------------------
 
       - name: Wait for EC2 Deployment
         run: |
 
-          echo "Waiting for EC2 deployment..."
+          echo "=========================================="
+          echo "Waiting for EC2 Deployment"
+          echo "=========================================="
 
           aws ssm wait command-executed \
             --region "$AWS_REGION" \
             --command-id "$COMMAND_ID" \
-            --instance-id "$EC2_INSTANCE_ID"
+            --instance-id "$EC2_INSTANCE_ID" || true
 
-          echo "SSM command completed successfully"
+          echo ""
+          echo "SSM command finished processing."
 
 
       # --------------------------------------------------------
-      # Get Deployment Result
+      # Get Deployment Status and Logs
       # --------------------------------------------------------
 
       - name: Verify EC2 Deployment
@@ -306,6 +364,7 @@ jobs:
           echo "Deployment Verification"
           echo "=========================================="
 
+
           STATUS=$(aws ssm get-command-invocation \
             --region "$AWS_REGION" \
             --command-id "$COMMAND_ID" \
@@ -313,13 +372,17 @@ jobs:
             --query "Status" \
             --output text)
 
+
+          echo ""
           echo "SSM Status:"
           echo "$STATUS"
 
 
+          echo ""
           echo "=========================================="
-          echo "Standard Output"
+          echo "STANDARD OUTPUT"
           echo "=========================================="
+
 
           aws ssm get-command-invocation \
             --region "$AWS_REGION" \
@@ -329,9 +392,11 @@ jobs:
             --output text
 
 
+          echo ""
           echo "=========================================="
-          echo "Error Output"
+          echo "ERROR OUTPUT"
           echo "=========================================="
+
 
           aws ssm get-command-invocation \
             --region "$AWS_REGION" \
@@ -342,32 +407,56 @@ jobs:
 
 
           if [ "$STATUS" != "Success" ]; then
-            echo "Deployment failed"
+
+            echo ""
+            echo "=========================================="
+            echo "DEPLOYMENT FAILED"
+            echo "=========================================="
+
             exit 1
+
           fi
 
-          echo "Deployment successful"
+
+          echo ""
+          echo "=========================================="
+          echo "DEPLOYMENT SUCCESSFUL"
+          echo "=========================================="
 
 
       # --------------------------------------------------------
-      # Application Health Check
+      # Application Deployment Information
       # --------------------------------------------------------
 
-      - name: Application Health Check
+      - name: Application Deployment Information
         run: |
 
-          echo "Checking application on EC2..."
+          echo "=========================================="
+          echo "Application Deployment Completed"
+          echo "=========================================="
 
-          sleep 5
+          echo ""
+          echo "EC2 Instance:"
+          echo "$EC2_INSTANCE_ID"
 
-          echo "Application deployment completed."
+          echo ""
+          echo "Application Port:"
+          echo "$APP_PORT"
 
-          echo "Access application using:"
-          echo "http://<EC2-PUBLIC-IP>:3000"
+          echo ""
+          echo "Application URL:"
+          echo "http://52.66.213.169:3000"
+
+          echo ""
+          echo "Docker Container:"
+          echo "$CONTAINER_NAME"
+
+          echo ""
+          echo "Deployment completed successfully."
 
 
   # ==========================================================
-  # JOB 4 - SUMMARY
+  # JOB 4 - PIPELINE SUMMARY
   # ==========================================================
 
   summary:
@@ -409,6 +498,14 @@ jobs:
           echo ""
           echo "S3 Bucket:"
           echo "$S3_BUCKET"
+
+          echo ""
+          echo "EC2 Instance:"
+          echo "$EC2_INSTANCE_ID"
+
+          echo ""
+          echo "Application:"
+          echo "http://52.66.213.169:3000"
 
           echo ""
           echo "=========================================="
