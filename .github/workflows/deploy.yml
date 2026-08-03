@@ -133,6 +133,8 @@ jobs:
           echo "=========================================="
           echo "Building Docker Image"
           echo "=========================================="
+
+          echo "Image:"
           echo "$IMAGE_URI"
 
           docker build \
@@ -212,6 +214,7 @@ jobs:
           echo "Build and Push Completed"
           echo "=========================================="
 
+          echo ""
           echo "Docker Image:"
           echo "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
@@ -275,13 +278,20 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Send Deployment Command to EC2
+      # Deploy Docker Container to EC2
       # --------------------------------------------------------
 
       - name: Deploy Docker Container to EC2
         id: deploy
         env:
           IMAGE_URI: ${{ needs.build-and-push.outputs.image }}
+
+          # GitHub Actions Secrets
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
         run: |
 
@@ -296,6 +306,165 @@ jobs:
           echo "Docker Image:"
           echo "$IMAGE_URI"
 
+          echo ""
+          echo "Database Host:"
+          echo "$DB_HOST"
+
+          echo ""
+          echo "Database Port:"
+          echo "$DB_PORT"
+
+          echo ""
+          echo "Database Name:"
+          echo "$DB_NAME"
+
+          echo ""
+          echo "Database User:"
+          echo "$DB_USER"
+
+          echo ""
+          echo "Database password is configured securely."
+
+
+          # ------------------------------------------------------
+          # Create temporary deployment script
+          # ------------------------------------------------------
+
+          cat > deploy.sh <<'SCRIPT'
+
+          #!/bin/bash
+
+          set -e
+
+          echo "=========================================="
+          echo "Hospital Application Deployment"
+          echo "=========================================="
+
+          echo ""
+          echo "Logging into Amazon ECR..."
+
+          aws ecr get-login-password \
+            --region "$AWS_REGION" \
+            | sudo docker login \
+            --username AWS \
+            --password-stdin "$ECR_REGISTRY"
+
+          echo "ECR login successful."
+
+
+          echo ""
+          echo "Pulling Docker image..."
+
+          sudo docker pull "$IMAGE_URI"
+
+          echo "Docker image pulled successfully."
+
+
+          echo ""
+          echo "Stopping old container..."
+
+          sudo docker stop "$CONTAINER_NAME" || true
+
+
+          echo ""
+          echo "Removing old container..."
+
+          sudo docker rm "$CONTAINER_NAME" || true
+
+
+          echo ""
+          echo "Starting new Docker container..."
+
+
+          sudo docker run -d \
+            --name "$CONTAINER_NAME" \
+            --restart unless-stopped \
+            -p "$APP_PORT:$APP_PORT" \
+            -e "DB_HOST=$DB_HOST" \
+            -e "DB_PORT=$DB_PORT" \
+            -e "DB_NAME=$DB_NAME" \
+            -e "DB_USER=$DB_USER" \
+            -e "DB_PASSWORD=$DB_PASSWORD" \
+            -e "DB_SSL=true" \
+            "$IMAGE_URI"
+
+
+          echo ""
+          echo "Docker container started."
+
+
+          echo ""
+          echo "Waiting for application startup..."
+
+          sleep 10
+
+
+          echo ""
+          echo "=========================================="
+          echo "Docker Container Status"
+          echo "=========================================="
+
+          sudo docker ps \
+            --filter "name=$CONTAINER_NAME"
+
+
+          echo ""
+          echo "=========================================="
+          echo "Docker Container Logs"
+          echo "=========================================="
+
+          sudo docker logs \
+            --tail 50 \
+            "$CONTAINER_NAME"
+
+
+          echo ""
+          echo "=========================================="
+          echo "Deployment Completed"
+          echo "=========================================="
+
+          SCRIPT
+
+
+          # ------------------------------------------------------
+          # Export deployment variables
+          # ------------------------------------------------------
+
+          export AWS_REGION="$AWS_REGION"
+
+          export ECR_REGISTRY="028282962975.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+          export IMAGE_URI="$IMAGE_URI"
+
+          export CONTAINER_NAME="$CONTAINER_NAME"
+
+          export APP_PORT="$APP_PORT"
+
+          export DB_HOST="$DB_HOST"
+
+          export DB_PORT="$DB_PORT"
+
+          export DB_NAME="$DB_NAME"
+
+          export DB_USER="$DB_USER"
+
+          export DB_PASSWORD="$DB_PASSWORD"
+
+
+          # ------------------------------------------------------
+          # Convert deployment script to Base64
+          # ------------------------------------------------------
+
+          SCRIPT_BASE64=$(base64 -w 0 deploy.sh)
+
+
+          echo ""
+          echo "Sending deployment command to EC2 using SSM..."
+
+
+          # ------------------------------------------------------
+          # Send command to EC2
+          # ------------------------------------------------------
 
           COMMAND_ID=$(aws ssm send-command \
             --region "$AWS_REGION" \
@@ -303,32 +472,31 @@ jobs:
             --document-name "AWS-RunShellScript" \
             --comment "Deploy Hospital Application" \
             --parameters "commands=[
-              \"set -e\",
-              \"echo Starting deployment\",
-              \"echo Logging into Amazon ECR\",
-              \"aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin 028282962975.dkr.ecr.$AWS_REGION.amazonaws.com\",
-              \"echo ECR login successful\",
-              \"echo Pulling Docker image\",
-              \"sudo docker pull $IMAGE_URI\",
-              \"echo Docker image pulled successfully\",
-              \"echo Stopping old container\",
-              \"sudo docker stop $CONTAINER_NAME || true\",
-              \"echo Removing old container\",
-              \"sudo docker rm $CONTAINER_NAME || true\",
-              \"echo Starting new container\",
-              \"sudo docker run -d --name $CONTAINER_NAME --restart unless-stopped -p $APP_PORT:$APP_PORT $IMAGE_URI\",
-              \"echo Checking running containers\",
-              \"sudo docker ps --filter name=$CONTAINER_NAME\",
-              \"echo Checking container logs\",
-              \"sudo docker logs --tail 50 $CONTAINER_NAME\",
-              \"echo Deployment completed successfully\"
+              \"echo $SCRIPT_BASE64 | base64 -d > /tmp/deploy-hospital.sh\",
+              \"chmod +x /tmp/deploy-hospital.sh\",
+              \"export AWS_REGION='$AWS_REGION'\",
+              \"export ECR_REGISTRY='$ECR_REGISTRY'\",
+              \"export IMAGE_URI='$IMAGE_URI'\",
+              \"export CONTAINER_NAME='$CONTAINER_NAME'\",
+              \"export APP_PORT='$APP_PORT'\",
+              \"export DB_HOST='$DB_HOST'\",
+              \"export DB_PORT='$DB_PORT'\",
+              \"export DB_NAME='$DB_NAME'\",
+              \"export DB_USER='$DB_USER'\",
+              \"export DB_PASSWORD='$DB_PASSWORD'\",
+              \"bash /tmp/deploy-hospital.sh\"
             ]" \
             --query "Command.CommandId" \
             --output text)
 
+
           echo ""
-          echo "SSM Command ID:"
+          echo "=========================================="
+          echo "SSM Command ID"
+          echo "=========================================="
+
           echo "$COMMAND_ID"
+
 
           echo "COMMAND_ID=$COMMAND_ID" >> "$GITHUB_ENV"
 
@@ -452,6 +620,10 @@ jobs:
           echo "$CONTAINER_NAME"
 
           echo ""
+          echo "Database:"
+          echo "Amazon RDS PostgreSQL"
+
+          echo ""
           echo "Deployment completed successfully."
 
 
@@ -508,4 +680,10 @@ jobs:
           echo "http://52.66.213.169:3000"
 
           echo ""
+          echo "Database:"
+          echo "Amazon RDS PostgreSQL"
+
+          echo ""
+          echo "=========================================="
+          echo "Pipeline Completed"
           echo "=========================================="
