@@ -132,3 +132,19 @@ variable "db_port" {
   type        = number
   default     = 5432
 }
+variable "project_name" {
+  description = "Project name"
+  type        = string
+  default     = "hospital"
+}
+
+variable "environment" {
+  description = "Deployment environment"
+  type        = string
+  default     = "prod"
+}
+
+variable "github_repository" {
+  description = "GitHub repository in owner/repository format"
+  type        = string
+}
