@@ -1,123 +1,120 @@
 variable "aws_region" {
-  description = "AWS region"
   type        = string
+  description = "AWS region"
 }
 
 variable "project_name" {
-  description = "Project name"
   type        = string
+  description = "Project name"
 }
 
 variable "environment" {
-  description = "Environment name"
   type        = string
+  description = "Environment name"
 }
 
 variable "vpc_cidr" {
-  description = "VPC CIDR"
   type        = string
-}
-
-variable "public_subnet_cidrs" {
-  description = "Public subnet CIDRs"
-  type        = list(string)
-}
-
-variable "private_subnet_cidrs" {
-  description = "Private subnet CIDRs"
-  type        = list(string)
+  description = "VPC CIDR block"
 }
 
 variable "availability_zones" {
-  description = "Availability zones"
   type        = list(string)
+  description = "Availability zones"
+}
+
+variable "public_subnet_cidrs" {
+  type        = list(string)
+  description = "Public subnet CIDRs"
+}
+
+variable "private_subnet_cidrs" {
+  type        = list(string)
+  description = "Private subnet CIDRs"
 }
 
 variable "container_port" {
-  description = "Application container port"
   type        = number
+  description = "Application port"
 }
 
 variable "container_cpu" {
-  description = "ECS CPU"
   type        = number
+  description = "ECS CPU units"
 }
 
 variable "container_memory" {
-  description = "ECS memory"
   type        = number
+  description = "ECS memory"
 }
 
 variable "desired_count" {
-  description = "Desired ECS task count"
   type        = number
+  description = "ECS desired task count"
 }
 
 variable "ecr_repository_name" {
-  description = "ECR repository name"
   type        = string
+  description = "ECR repository name"
 }
 
 variable "container_image" {
-  description = "Docker image URI"
   type        = string
+  description = "ECS container image"
 }
 
 variable "execution_role_arn" {
-  description = "Existing ECS task execution IAM role ARN"
   type        = string
+  description = "Existing ECS execution role ARN"
 }
 
 variable "task_role_arn" {
-  description = "Existing ECS task IAM role ARN"
   type        = string
+  description = "Existing ECS task role ARN"
 }
 
 variable "db_host" {
-  description = "Existing RDS endpoint"
   type        = string
+  description = "RDS endpoint"
 }
 
 variable "db_name" {
-  description = "Database name"
   type        = string
+  description = "Database name"
 }
 
 variable "db_user" {
-  description = "Database username"
   type        = string
-  sensitive   = true
+  description = "Database username"
 }
 
 variable "db_password" {
-  description = "Database password"
   type        = string
   sensitive   = true
+  description = "Database password"
 }
 
 variable "db_port" {
-  description = "Database port"
   type        = number
   default     = 5432
 }
 
 variable "db_ssl" {
-  description = "Enable database SSL"
   type        = string
   default     = "true"
 }
 
 variable "domain_name" {
-  description = "Application domain name"
   type        = string
+  description = "Application domain"
 }
 
 variable "hosted_zone_id" {
-  description = "Route53 hosted zone ID"
   type        = string
+  description = "Route53 hosted zone ID"
 }
 
 variable "s3_bucket_name" {
-  description = "S3 bucket for application images"
   type        = string
+  description = "S3 bucket name"
 }
