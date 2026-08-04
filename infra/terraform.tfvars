@@ -3,6 +3,7 @@
 aws_region   = "ap-south-1"
 project_name = "hospital"
 environment  = "prod"
+github_repository = "Surya9656/hospital"
 
 vpc_cidr = "10.0.0.0/16"
 
