@@ -17,11 +17,12 @@ permissions:
   contents: read
 
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
   TF_WORKING_DIR: infra
+  AWS_REGION: ${{ secrets.AWS_REGION }}
 
 jobs:
   terraform:
+    name: Terraform Deploy
     runs-on: ubuntu-latest
 
     defaults:
@@ -34,6 +35,8 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.2
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -42,16 +45,14 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Verify AWS Identity
+      - name: Verify AWS Credentials
         run: aws sts get-caller-identity
 
       - name: Terraform Format
-        run: |
-          terraform fmt -recursive
-          terraform fmt -check -recursive
+        run: terraform fmt -recursive
 
       - name: Terraform Init
-        run: terraform init
+        run: terraform init -input=false
 
       - name: Terraform Validate
         run: terraform validate
@@ -61,4 +62,4 @@ jobs:
 
       - name: Terraform Apply
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: terraform apply -auto-approve tfplan
+        run: terraform apply -input=false -auto-approve tfplan
