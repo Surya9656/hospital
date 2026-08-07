@@ -16,8 +16,8 @@ env:
   AWS_REGION: ap-south-1
   ECR_REPOSITORY: hospital-app
   S3_BUCKET: hospital-app-artifacts-028282962975
-  EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
   EC2_INSTANCE_ID: i-0fb5f0c5bd05bcdc9
+  EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
   CONTAINER_NAME: hospital-app
   APP_PORT: 3000
 
@@ -95,8 +95,7 @@ jobs:
         with:
           name: hospital-build
           path: dist/
-
-
+          
       # --------------------------------------------------------
       # AWS OIDC Authentication
       # --------------------------------------------------------
