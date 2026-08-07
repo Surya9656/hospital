@@ -16,6 +16,7 @@ env:
   AWS_REGION: ap-south-1
   ECR_REPOSITORY: hospital-app
   S3_BUCKET: hospital-app-artifacts-028282962975
+  EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
   EC2_INSTANCE_ID: i-0fb5f0c5bd05bcdc9
   CONTAINER_NAME: hospital-app
   APP_PORT: 3000
@@ -613,7 +614,7 @@ jobs:
 
           echo ""
           echo "Application URL:"
-          echo "http://52.66.213.169:3000"
+          echo "http://${EC2_PUBLIC_IP}:${APP_PORT}"
 
           echo ""
           echo "Docker Container:"
@@ -677,7 +678,7 @@ jobs:
 
           echo ""
           echo "Application:"
-          echo "http://52.66.213.169:3000"
+          echo "http://${EC2_PUBLIC_IP}:${APP_PORT}"
 
           echo ""
           echo "Database:"
