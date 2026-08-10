@@ -11,282 +11,208 @@ on:
 
 permissions:
   contents: read
+  id-token: write
+  security-events: write
+
+concurrency:
+  group: hospital-production
+  cancel-in-progress: false
 
 env:
   AWS_REGION: ap-south-1
   ECR_REPOSITORY: hospital-app
-  S3_BUCKET: hospital-app-artifacts-028282962975
+
   EC2_INSTANCE_ID: i-0fb5f0c5bd05bcdc9
-  EC2_PUBLIC_IP: 13.127.59.4
+
   CONTAINER_NAME: hospital-app
   APP_PORT: 3000
 
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+
 jobs:
 
-  # ====================================================
-  # JOB 1 - CI: BUILD APPLICATION
-  # =====================================================
+  # ============================================================
+  # 1. CI - BUILD / TEST / SECURITY
+  # ============================================================
 
   ci:
-    name: CI - Build Application
+    name: CI - Build Test Security
     runs-on: ubuntu-latest
 
     steps:
 
-      - name: Checkout Code
-        uses: actions/checkout@v5
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: npm ci
 
-      - name: Build Application
+      - name: Dependency security audit
+        run: |
+          npm audit --audit-level=high
+
+      - name: Build application
         run: npm run build
 
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: hospital-build
-          path: dist/
+  # ============================================================
+  # 2. CODEQL SECURITY
+  # ============================================================
 
-
-  # ==========================================================
-  # JOB 2 - DOCKER BUILD + ECR PUSH + S3 UPLOAD
-  # ==========================================================
-
-  build-and-push:
-    name: Docker Build, ECR Push and S3 Upload
+  codeql:
+    name: CodeQL Security Scan
     runs-on: ubuntu-latest
 
-    needs: ci
-
-    # Only deploy after push to main.
-    # Pull requests only run CI.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
 
     permissions:
+      actions: read
       contents: read
-      id-token: write
+      security-events: write
+
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+
+  # ============================================================
+  # 3. DOCKER BUILD + TRIVY
+  # ============================================================
+
+  docker-security:
+    name: Docker Build and Security Scan
+    needs:
+      - ci
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-latest
 
     outputs:
-      image: ${{ steps.build-image.outputs.image }}
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+      image_uri: ${{ steps.meta.outputs.image_uri }}
 
     steps:
 
-      # --------------------------------------------------------
-      # Checkout
-      # --------------------------------------------------------
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
-      - name: Checkout Code
-        uses: actions/checkout@v5
-
-
-      # --------------------------------------------------------
-      # Download CI Build Artifact
-      # --------------------------------------------------------
-
-      - name: Download Build Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: hospital-build
-          path: dist/
-          
-      # --------------------------------------------------------
-      # AWS OIDC Authentication
-      # --------------------------------------------------------
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v5
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-
-      # --------------------------------------------------------
-      # Login to Amazon ECR
-      # --------------------------------------------------------
-
       - name: Login to Amazon ECR
-        id: login-ecr
+        id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-
-      # --------------------------------------------------------
-      # Build Docker Image
-      # --------------------------------------------------------
-
-      - name: Build Docker Image
-        id: build-image
+      - name: Set Docker image metadata
+        id: meta
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
-
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
+          IMAGE_TAG="${GITHUB_SHA}"
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
-          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
-          echo "=========================================="
-          echo "Building Docker Image"
-          echo "=========================================="
+          echo "IMAGE_URI=${IMAGE_URI}"
 
-          echo "Image:"
-          echo "$IMAGE_URI"
-
+      - name: Build Docker image
+        run: |
           docker build \
-            -t "$IMAGE_URI" \
-            -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" \
+            --pull \
+            --tag "${{ steps.meta.outputs.image_uri }}" \
             .
 
-          echo "image=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+      # ----------------------------------------------------------
+      # Trivy filesystem scan
+      # ----------------------------------------------------------
 
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: 1
 
-      # --------------------------------------------------------
-      # Push Docker Image to ECR
-      # --------------------------------------------------------
+      # ----------------------------------------------------------
+      # Trivy Docker image scan
+      # ----------------------------------------------------------
 
-      - name: Push Docker Image to ECR
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Trivy Docker image scan
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ${{ steps.meta.outputs.image_uri }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: 1
 
+      # ----------------------------------------------------------
+      # Push image only after security checks pass
+      # ----------------------------------------------------------
+
+      - name: Push Docker image to ECR
         run: |
+          docker push "${{ steps.meta.outputs.image_uri }}"
 
-          echo "=========================================="
-          echo "Pushing Docker Image to ECR"
-          echo "=========================================="
-
-          docker push \
-            "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-
-          docker push \
-            "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
-
-
-      # --------------------------------------------------------
-      # Upload Versioned Build to S3
-      # --------------------------------------------------------
-
-      - name: Upload Versioned Build to S3
-        run: |
-
-          echo "=========================================="
-          echo "Uploading Versioned Build to S3"
-          echo "=========================================="
-
-          aws s3 sync dist/ \
-            "s3://${S3_BUCKET}/builds/${GITHUB_SHA}/" \
-            --delete
-
-
-      # --------------------------------------------------------
-      # Update Latest Build in S3
-      # --------------------------------------------------------
-
-      - name: Update Latest Build in S3
-        run: |
-
-          echo "=========================================="
-          echo "Updating Latest Build in S3"
-          echo "=========================================="
-
-          aws s3 sync dist/ \
-            "s3://${S3_BUCKET}/latest/" \
-            --delete
-
-
-      # --------------------------------------------------------
-      # Build and Push Summary
-      # --------------------------------------------------------
-
-      - name: Build and Push Summary
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
-
-        run: |
-
-          echo "=========================================="
-          echo "Build and Push Completed"
-          echo "=========================================="
-
-          echo ""
-          echo "Docker Image:"
-          echo "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-
-          echo ""
-          echo "S3 Bucket:"
-          echo "$S3_BUCKET"
-
-          echo ""
-          echo "Build completed successfully."
-
-
-  # ==========================================================
-  # JOB 3 - DEPLOY DOCKER CONTAINER TO EC2 USING SSM
-  # ==========================================================
+  # ============================================================
+  # 4. DEPLOY TO EC2 USING SSM
+  # ============================================================
 
   deploy:
-    name: Deploy Application to EC2
-    runs-on: ubuntu-latest
-
-    needs: build-and-push
+    name: Production Deployment
+    needs:
+      - docker-security
 
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
-    permissions:
-      contents: read
-      id-token: write
+    runs-on: ubuntu-latest
 
     steps:
 
-      # --------------------------------------------------------
-      # AWS OIDC Authentication
-      # --------------------------------------------------------
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v5
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # ----------------------------------------------------------
+      # Get ECR registry
+      # ----------------------------------------------------------
 
-      # --------------------------------------------------------
-      # Verify EC2 SSM Status
-      # --------------------------------------------------------
+      - name: Get ECR registry
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Verify EC2 SSM Status
-        run: |
+      # ----------------------------------------------------------
+      # Deploy through AWS SSM
+      # ----------------------------------------------------------
 
-          echo "=========================================="
-          echo "Checking EC2 SSM Status"
-          echo "=========================================="
-
-          aws ssm describe-instance-information \
-            --region "$AWS_REGION"
-
-          echo ""
-          echo "Checking target EC2 instance..."
-
-          aws ssm describe-instance-information \
-            --filters "Key=InstanceIds,Values=${EC2_INSTANCE_ID}" \
-            --region "$AWS_REGION"
-
-
-      # --------------------------------------------------------
-      # Deploy Docker Container to EC2
-      # --------------------------------------------------------
-
-      - name: Deploy Docker Container to EC2
+      - name: Deploy application to EC2
         id: deploy
         env:
-          IMAGE_URI: ${{ needs.build-and-push.outputs.image }}
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
 
-          # GitHub Actions Secrets
+          IMAGE_TAG: ${{ needs.docker-security.outputs.image_tag }}
+
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_PORT: ${{ secrets.DB_PORT }}
           DB_NAME: ${{ secrets.DB_NAME }}
@@ -295,395 +221,203 @@ jobs:
 
         run: |
 
-          echo "=========================================="
-          echo "Starting EC2 Deployment"
-          echo "=========================================="
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
-          echo "EC2 Instance:"
-          echo "$EC2_INSTANCE_ID"
-
-          echo ""
-          echo "Docker Image:"
-          echo "$IMAGE_URI"
-
-          echo ""
-          echo "Database Host:"
-          echo "$DB_HOST"
-
-          echo ""
-          echo "Database Port:"
-          echo "$DB_PORT"
-
-          echo ""
-          echo "Database Name:"
-          echo "$DB_NAME"
-
-          echo ""
-          echo "Database User:"
-          echo "$DB_USER"
-
-          echo ""
-          echo "Database password is configured securely."
-
-
-          # ------------------------------------------------------
-          # Create temporary deployment script
-          # ------------------------------------------------------
-
-          cat > deploy.sh <<'SCRIPT'
-
-          #!/bin/bash
-
-          set -e
-
-          echo "=========================================="
-          echo "Hospital Application Deployment"
-          echo "=========================================="
-
-          echo ""
-          echo "Logging into Amazon ECR..."
-
-          aws ecr get-login-password \
-            --region "$AWS_REGION" \
-            | sudo docker login \
-            --username AWS \
-            --password-stdin "$ECR_REGISTRY"
-
-          echo "ECR login successful."
-
-
-          echo ""
-          echo "Pulling Docker image..."
-
-          sudo docker pull "$IMAGE_URI"
-
-          echo "Docker image pulled successfully."
-
-
-          echo ""
-          echo "Stopping old container..."
-
-          sudo docker stop "$CONTAINER_NAME" || true
-
-
-          echo ""
-          echo "Removing old container..."
-
-          sudo docker rm "$CONTAINER_NAME" || true
-
-
-          echo ""
-          echo "Starting new Docker container..."
-
-
-          sudo docker run -d \
-            --name "$CONTAINER_NAME" \
-            --restart unless-stopped \
-            -p "$APP_PORT:$APP_PORT" \
-            -e "DB_HOST=$DB_HOST" \
-            -e "DB_PORT=$DB_PORT" \
-            -e "DB_NAME=$DB_NAME" \
-            -e "DB_USER=$DB_USER" \
-            -e "DB_PASSWORD=$DB_PASSWORD" \
-            -e "DB_SSL=true" \
-            "$IMAGE_URI"
-
-
-          echo ""
-          echo "Docker container started."
-
-
-          echo ""
-          echo "Waiting for application startup..."
-
-          sleep 10
-
-
-          echo ""
-          echo "=========================================="
-          echo "Docker Container Status"
-          echo "=========================================="
-
-          sudo docker ps \
-            --filter "name=$CONTAINER_NAME"
-
-
-          echo ""
-          echo "=========================================="
-          echo "Docker Container Logs"
-          echo "=========================================="
-
-          sudo docker logs \
-            --tail 50 \
-            "$CONTAINER_NAME"
-
-
-          echo ""
-          echo "=========================================="
-          echo "Deployment Completed"
-          echo "=========================================="
-
-          SCRIPT
-
-
-          # ------------------------------------------------------
-          # Export deployment variables
-          # ------------------------------------------------------
-
-          export AWS_REGION="$AWS_REGION"
-
-          export ECR_REGISTRY="028282962975.dkr.ecr.${AWS_REGION}.amazonaws.com"
-
-          export IMAGE_URI="$IMAGE_URI"
-
-          export CONTAINER_NAME="$CONTAINER_NAME"
-
-          export APP_PORT="$APP_PORT"
-
-          export DB_HOST="$DB_HOST"
-
-          export DB_PORT="$DB_PORT"
-
-          export DB_NAME="$DB_NAME"
-
-          export DB_USER="$DB_USER"
-
-          export DB_PASSWORD="$DB_PASSWORD"
-
-
-          # ------------------------------------------------------
-          # Convert deployment script to Base64
-          # ------------------------------------------------------
-
-          SCRIPT_BASE64=$(base64 -w 0 deploy.sh)
-
-
-          echo ""
-          echo "Sending deployment command to EC2 using SSM..."
-
-
-          # ------------------------------------------------------
-          # Send command to EC2
-          # ------------------------------------------------------
+          echo "Deploying:"
+          echo "${IMAGE_URI}"
 
           COMMAND_ID=$(aws ssm send-command \
-            --region "$AWS_REGION" \
-            --instance-ids "$EC2_INSTANCE_ID" \
+            --instance-ids "${EC2_INSTANCE_ID}" \
             --document-name "AWS-RunShellScript" \
-            --comment "Deploy Hospital Application" \
-            --parameters "commands=[
-              \"echo $SCRIPT_BASE64 | base64 -d > /tmp/deploy-hospital.sh\",
-              \"chmod +x /tmp/deploy-hospital.sh\",
-              \"export AWS_REGION='$AWS_REGION'\",
-              \"export ECR_REGISTRY='$ECR_REGISTRY'\",
-              \"export IMAGE_URI='$IMAGE_URI'\",
-              \"export CONTAINER_NAME='$CONTAINER_NAME'\",
-              \"export APP_PORT='$APP_PORT'\",
-              \"export DB_HOST='$DB_HOST'\",
-              \"export DB_PORT='$DB_PORT'\",
-              \"export DB_NAME='$DB_NAME'\",
-              \"export DB_USER='$DB_USER'\",
-              \"export DB_PASSWORD='$DB_PASSWORD'\",
-              \"bash /tmp/deploy-hospital.sh\"
-            ]" \
-            --query "Command.CommandId" \
+            --comment "Hospital production deployment ${IMAGE_TAG}" \
+            --parameters commands='[
+              "set -e",
+
+              "echo ===== DEPLOYMENT START =====",
+
+              "echo Pulling new image...",
+              "sudo docker pull '"${IMAGE_URI}"'",
+
+              "echo Saving current image for rollback...",
+              "if sudo docker inspect '"${CONTAINER_NAME}"' >/dev/null 2>&1; then sudo docker inspect '"${CONTAINER_NAME}"' --format='\''{{.Config.Image}}'\'' | sudo tee /tmp/hospital_previous_image >/dev/null; else echo NONE | sudo tee /tmp/hospital_previous_image >/dev/null; fi",
+
+              "echo Stopping old container...",
+              "sudo docker stop '"${CONTAINER_NAME}"' || true",
+
+              "echo Removing old container...",
+              "sudo docker rm '"${CONTAINER_NAME}"' || true",
+
+              "echo Starting new container...",
+
+              "sudo docker run -d \
+                --name '"${CONTAINER_NAME}"' \
+                --restart unless-stopped \
+                -p '"${APP_PORT}"':'"${APP_PORT}"' \
+                -e NODE_ENV=production \
+                -e PORT='"${APP_PORT}"' \
+                -e DB_HOST='"${DB_HOST}"' \
+                -e DB_PORT='"${DB_PORT}"' \
+                -e DB_NAME='"${DB_NAME}"' \
+                -e DB_USER='"${DB_USER}"' \
+                -e DB_PASSWORD='"${DB_PASSWORD}"' \
+                -e DB_SSL=true \
+                '"${IMAGE_URI}"'",
+
+              "echo Waiting for application startup...",
+              "sleep 15",
+
+              "echo Checking container status...",
+              "STATUS=$(sudo docker inspect -f '\''{{.State.Status}}'\'' '"${CONTAINER_NAME}"')",
+
+              "if [ \"$STATUS\" != \"running\" ]; then echo 'Container is not running'; sudo docker ps -a; sudo docker logs --tail 100 '"${CONTAINER_NAME}"'; exit 1; fi",
+
+              "echo Container is running.",
+
+              "echo Checking application health...",
+
+              "HEALTHY=false",
+
+              "for i in $(seq 1 12); do",
+
+              "  if curl -fsS http://localhost:'"${APP_PORT}"'/ >/dev/null 2>&1; then",
+
+              "    HEALTHY=true",
+
+              "    echo 'Application health check PASSED'",
+
+              "    break",
+
+              "  fi",
+
+              "  echo \"Health check attempt $i failed. Waiting...\"",
+
+              "  sleep 5",
+
+              "done",
+
+              "if [ \"$HEALTHY\" != \"true\" ]; then",
+
+              "  echo 'APPLICATION HEALTH CHECK FAILED'",
+
+              "  sudo docker ps -a",
+
+              "  sudo docker logs --tail 150 '"${CONTAINER_NAME}"'",
+
+              "  exit 1",
+
+              "fi",
+
+              "echo ===== DEPLOYMENT SUCCESSFUL ====="
+            ]' \
+            --query 'Command.CommandId' \
             --output text)
 
+          echo "SSM Command ID: ${COMMAND_ID}"
 
-          echo ""
-          echo "=========================================="
-          echo "SSM Command ID"
-          echo "=========================================="
+          echo "COMMAND_ID=${COMMAND_ID}" >> "$GITHUB_ENV"
 
-          echo "$COMMAND_ID"
+      # ----------------------------------------------------------
+      # Wait for SSM command
+      # ----------------------------------------------------------
 
-
-          echo "COMMAND_ID=$COMMAND_ID" >> "$GITHUB_ENV"
-
-
-      # --------------------------------------------------------
-      # Wait for Deployment
-      # --------------------------------------------------------
-
-      - name: Wait for EC2 Deployment
+      - name: Wait for deployment
         run: |
 
-          echo "=========================================="
-          echo "Waiting for EC2 Deployment"
-          echo "=========================================="
+          echo "Waiting for EC2 deployment..."
 
-          aws ssm wait command-executed \
-            --region "$AWS_REGION" \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$EC2_INSTANCE_ID" || true
+          for i in {1..30}; do
 
-          echo ""
-          echo "SSM command finished processing."
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$EC2_INSTANCE_ID" \
+              --query 'Status' \
+              --output text)
 
+            echo "Deployment status: $STATUS"
 
-      # --------------------------------------------------------
-      # Get Deployment Status and Logs
-      # --------------------------------------------------------
+            if [ "$STATUS" = "Success" ]; then
+              echo "Deployment successful."
+              break
+            fi
 
-      - name: Verify EC2 Deployment
+            if [ "$STATUS" = "Failed" ] || \
+               [ "$STATUS" = "Cancelled" ] || \
+               [ "$STATUS" = "TimedOut" ]; then
+
+              echo "Deployment failed."
+
+              aws ssm get-command-invocation \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$EC2_INSTANCE_ID" \
+                --query '{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}'
+
+              exit 1
+            fi
+
+            sleep 10
+
+          done
+
+      # ----------------------------------------------------------
+      # Final verification
+      # ----------------------------------------------------------
+
+      - name: Verify deployment
         run: |
 
-          echo "=========================================="
-          echo "Deployment Verification"
-          echo "=========================================="
+          echo "Checking final SSM deployment status..."
 
-
-          STATUS=$(aws ssm get-command-invocation \
-            --region "$AWS_REGION" \
+          FINAL_STATUS=$(aws ssm get-command-invocation \
             --command-id "$COMMAND_ID" \
             --instance-id "$EC2_INSTANCE_ID" \
-            --query "Status" \
+            --query 'Status' \
             --output text)
 
-
-          echo ""
-          echo "SSM Status:"
-          echo "$STATUS"
-
-
-          echo ""
-          echo "=========================================="
-          echo "STANDARD OUTPUT"
-          echo "=========================================="
-
-
-          aws ssm get-command-invocation \
-            --region "$AWS_REGION" \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$EC2_INSTANCE_ID" \
-            --query "StandardOutputContent" \
-            --output text
-
-
-          echo ""
-          echo "=========================================="
-          echo "ERROR OUTPUT"
-          echo "=========================================="
-
-
-          aws ssm get-command-invocation \
-            --region "$AWS_REGION" \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$EC2_INSTANCE_ID" \
-            --query "StandardErrorContent" \
-            --output text
-
-
-          if [ "$STATUS" != "Success" ]; then
-
-            echo ""
-            echo "=========================================="
-            echo "DEPLOYMENT FAILED"
-            echo "=========================================="
-
+          if [ "$FINAL_STATUS" != "Success" ]; then
+            echo "Final deployment verification failed."
             exit 1
-
           fi
 
-
-          echo ""
-          echo "=========================================="
+          echo "======================================"
           echo "DEPLOYMENT SUCCESSFUL"
-          echo "=========================================="
+          echo "======================================"
 
-
-      # --------------------------------------------------------
-      # Application Deployment Information
-      # --------------------------------------------------------
-
-      - name: Application Deployment Information
-        run: |
-
-          echo "=========================================="
-          echo "Application Deployment Completed"
-          echo "=========================================="
-
-          echo ""
-          echo "EC2 Instance:"
-          echo "$EC2_INSTANCE_ID"
-
-          echo ""
-          echo "Application Port:"
-          echo "$APP_PORT"
-
-          echo ""
-          echo "Application URL:"
-          echo "http://${EC2_PUBLIC_IP}:${APP_PORT}"
-
-          echo ""
-          echo "Docker Container:"
-          echo "$CONTAINER_NAME"
-
-          echo ""
-          echo "Database:"
-          echo "Amazon RDS PostgreSQL"
-
-          echo ""
-          echo "Deployment completed successfully."
-
-
-  # ==========================================================
-  # JOB 4 - PIPELINE SUMMARY
-  # ==========================================================
+  # ============================================================
+  # 5. DEPLOYMENT SUMMARY
+  # ============================================================
 
   summary:
-    name: CI/CD Pipeline Summary
-    runs-on: ubuntu-latest
-
+    name: Deployment Summary
     needs:
       - ci
-      - build-and-push
+      - codeql
+      - docker-security
       - deploy
 
     if: always()
 
+    runs-on: ubuntu-latest
+
     steps:
 
-      - name: Show Pipeline Summary
+      - name: Deployment summary
         run: |
 
           echo "=========================================="
-          echo "Hospital CI/CD Pipeline Summary"
+          echo "        HOSPITAL APPLICATION"
+          echo "        DEPLOYMENT SUMMARY"
           echo "=========================================="
 
-          echo ""
-          echo "CI Status:"
-          echo "${{ needs.ci.result }}"
+          echo "CI:              ${{ needs.ci.result }}"
+          echo "CodeQL:          ${{ needs.codeql.result }}"
+          echo "Docker Security: ${{ needs.docker-security.result }}"
+          echo "Deployment:      ${{ needs.deploy.result }}"
 
-          echo ""
-          echo "Docker / ECR / S3 Status:"
-          echo "${{ needs.build-and-push.result }}"
-
-          echo ""
-          echo "EC2 Deployment Status:"
-          echo "${{ needs.deploy.result }}"
-
-          echo ""
-          echo "Docker Image:"
-          echo "${{ needs.build-and-push.outputs.image }}"
-
-          echo ""
-          echo "S3 Bucket:"
-          echo "$S3_BUCKET"
-
-          echo ""
-          echo "EC2 Instance:"
-          echo "$EC2_INSTANCE_ID"
-
-          echo ""
-          echo "Application:"
-          echo "http://${EC2_PUBLIC_IP}:${APP_PORT}"
-
-          echo ""
-          echo "Database:"
-          echo "Amazon RDS PostgreSQL"
-
-          echo ""
           echo "=========================================="
-          echo "Pipeline Completed"
-          echo "=========================================="
+
+          if [ "${{ needs.deploy.result }}" != "success" ]; then
+            echo "Deployment FAILED."
+            exit 1
+          fi
+
+          echo "Production deployment completed successfully."
